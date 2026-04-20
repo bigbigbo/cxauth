@@ -6,7 +6,7 @@
 
 1. Manage multiple ChatGPT-backed Codex `auth.json` snapshots.
 2. Globally switch Codex accounts by atomically replacing `~/.codex/auth.json`.
-3. Refresh quota state by driving Codex's `/status` surface in an isolated environment.
+3. Refresh quota state by calling Codex's ChatGPT backend usage endpoint with the saved account token.
 
 The existing Python code stays available in git history as a reference implementation, but the working implementation will be replaced by Bun + TypeScript.
 
@@ -17,7 +17,7 @@ The existing Python code stays available in git history as a reference implement
 - Keep the existing `~/.cxauth/` storage format compatible so previously saved accounts do not need migration.
 - Preserve the existing CLI commands and user-facing behavior.
 - Remove the Python package, Python tests, and Python install flow from the active codebase.
-- Keep the quota probe dependency footprint small by avoiding native PTY packages in the first Bun implementation.
+- Keep the quota probe dependency footprint small by using built-in `fetch` instead of native PTY packages.
 
 ## Non-Goals
 
@@ -26,14 +26,14 @@ The existing Python code stays available in git history as a reference implement
 - Add API key account support.
 - Add reverse-engineering of ChatGPT web analytics as a primary quota source.
 - Maintain Python and TypeScript implementations in parallel.
-- Provide a fully cross-platform PTY layer in the first migration. The first target is the user's current macOS environment.
+- Reimplement Codex's full app-server rate-limit protocol. The first implementation reads the default `codex` usage payload only.
 
 ## Constraints and Assumptions
 
 - The machine has Bun available. Current local version checked during design: `1.3.7`.
 - The machine has a working `codex` CLI available.
 - The user wants Bun + TypeScript as the active implementation, not Python.
-- The first implementation targets macOS and may use `/usr/bin/script` to allocate a pseudo-terminal for interactive Codex probing.
+- The quota probe uses the default ChatGPT backend URL `https://chatgpt.com/backend-api/wham/usage`, matching openai/codex's backend-client path for ChatGPT auth.
 - Saved auth snapshots contain sensitive tokens and must remain private.
 - Quota probing is still best-effort. Switching must work even when quota parsing fails.
 
@@ -173,24 +173,23 @@ Validation failure marks the switch as unverified but does not erase the new glo
 
 ### Quota Probe
 
-The first Bun implementation will use the macOS `script` utility as the PTY backend:
+The Bun implementation calls the same ChatGPT backend usage endpoint that openai/codex uses for account rate limits:
 
 ```bash
-CODEX_HOME=<isolated-temp-home> script -q -t 0 /dev/null codex --no-alt-screen
+GET https://chatgpt.com/backend-api/wham/usage
 ```
 
 The TypeScript code will:
 
-1. Copy the target account's `auth.json` into an isolated temporary Codex home.
-2. Spawn `script` through Bun.
-3. Write `/status\n` to stdin.
-4. Capture stdout/stderr until a timeout or recognizable quota output.
-5. Write `/quit\n` and terminate the process if needed.
-6. Strip ANSI and terminal control characters from captured output.
-7. Parse `weekly`, `weekly-limit`, `5h`, `five-hour`, and `five-hour-limit` percentages.
-8. Persist normalized quota state to the registry.
+1. Read the target account's saved `auth.json`.
+2. Extract `tokens.access_token`.
+3. Extract `tokens.account_id`, falling back to JWT metadata when needed.
+4. Send `Authorization: Bearer <token>` and `ChatGPT-Account-Id: <account-id>`.
+5. Parse `rate_limit.primary_window.used_percent` into remaining `fiveHourLimit` with `100 - used_percent`.
+6. Parse `rate_limit.secondary_window.used_percent` into remaining `weeklyLimit` with `100 - used_percent`.
+7. Persist normalized quota state to the registry with `source = "chatgpt-usage"`.
 
-If `/usr/bin/script` is unavailable or the probe times out, status becomes `timeout` or `parse_failed`. This must not affect account switching.
+If the request is unauthorized, status becomes `auth_expired`. If the request times out or the response shape is not parseable, status becomes `timeout` or `parse_failed`. This must not affect account switching.
 
 ## Data Integrity and Security
 
@@ -215,8 +214,8 @@ Tests cover:
 - Registry round trips, permissions, atomic write behavior, and lock behavior.
 - Auth snapshot validation and JWT metadata extraction.
 - Command behavior for add, duplicate rejection, switch, current detection, list, remove, and status refresh.
-- Codex integration through fake executable scripts rather than real Codex.
-- Quota parser behavior for `weekly`, `weekly-limit`, `5h`, `five-hour`, ANSI output, parse failures, and timeouts.
+- Codex login integration through fake executable scripts rather than real Codex.
+- Usage API parser behavior for primary and secondary windows, parse failures, unauthorized responses, and timeouts.
 - CLI output and exit codes.
 
 Manual verification covers:

@@ -6,7 +6,7 @@
 
 1. Add and store multiple ChatGPT login snapshots for Codex.
 2. Switch the globally active Codex account by atomically replacing `~/.codex/auth.json`.
-3. Query each account's quota state on a best-effort basis by driving Codex's own `/status` surface in an isolated environment.
+3. Query each account's quota state on a best-effort basis through Codex's ChatGPT backend usage endpoint.
 
 The first version supports only ChatGPT login accounts. API key accounts are explicitly out of scope.
 
@@ -29,7 +29,7 @@ The first version supports only ChatGPT login accounts. API key accounts are exp
 - The machine already has a working `codex` CLI installed.
 - The active global Codex credentials are read from `~/.codex/auth.json` when file storage is used.
 - ChatGPT login via `codex login --device-auth` produces credentials equivalent in usability to normal browser login.
-- Codex has an internal rate-limit surface exposed through `/status` and related status line fields such as `five-hour-limit` and `weekly-limit`.
+- Codex exposes account rate limits through its ChatGPT backend usage endpoint, which is also rendered by the TUI `/status` surface.
 - Quota extraction is best-effort. If parsing fails, account switching must still work.
 
 ## User Experience
@@ -65,7 +65,7 @@ The first version supports only ChatGPT login accounts. API key accounts are exp
 Example:
 
 ```text
-NAME      EMAIL                PLAN  ACTIVE  WEEKLY   5H       LAST_CHECKED        HEALTH
+NAME      EMAIL                PLAN  ACTIVE  WEEKLY_LEFT  5H_LEFT  LAST_CHECKED        HEALTH
 main      a@example.com        plus  *       62%      15%      2026-04-20 14:32   ok
 backup-1  b@example.com        plus          100%     unknown  2026-04-20 14:28   ok
 backup-2  c@example.com        plus          unknown  unknown  never               not_checked
@@ -208,25 +208,32 @@ Quota probing must not silently change the user's global active account.
 
 ### Source of Truth
 
-The first version uses Codex's own internal status surface by launching an isolated Codex session and issuing `/status`.
+The first version uses Codex's ChatGPT backend usage endpoint, which is the source used by openai/codex's rate-limit client for ChatGPT auth:
 
-This is preferred over scraping `chatgpt.com/codex/cloud/settings/analytics` because it follows the CLI's own product path and appears to rely on the same authenticated rate-limit state that powers the TUI status line.
+```text
+GET https://chatgpt.com/backend-api/wham/usage
+```
+
+This is preferred over scraping `chatgpt.com/codex/cloud/settings/analytics` because it follows the CLI's own product path and relies on the same authenticated rate-limit state that powers the TUI status line.
 
 ### Steps
 
-1. Create a temporary isolated `CODEX_HOME`.
-2. Copy the target account's `auth.json` into that isolated environment.
-3. Start a short-lived interactive Codex session in the isolated environment.
-4. Send `/status`.
-5. Capture the resulting output and parse available limit fields.
-6. Persist normalized values into `registry.json.accounts[<name>].status`.
-7. Record `checkedAt`, `source = "/status"`, and a raw output snippet.
+1. Read the target account's saved `auth.json`.
+2. Extract `tokens.access_token`.
+3. Extract `tokens.account_id`, falling back to JWT metadata when needed.
+4. Send the token as `Authorization: Bearer <token>`.
+5. Send the account id as `ChatGPT-Account-Id: <account-id>`.
+6. Parse the default `rate_limit` payload.
+7. Persist normalized values into `registry.json.accounts[<name>].status`.
+8. Record `checkedAt`, `source = "chatgpt-usage"`, and a raw response snippet.
 
 ### Parsing Rules
 
-- If both `weekly` and `5h` values are found, store both.
-- If only one value is found, keep the other as `unknown`.
+- Map `rate_limit.primary_window.used_percent` to remaining `5h` quota with `100 - used_percent`.
+- Map `rate_limit.secondary_window.used_percent` to remaining `weekly` quota with `100 - used_percent`.
+- If only one window is found, keep the other as `unknown`.
 - If parsing fails, set `state = "parse_failed"` and preserve the snippet.
+- If the request is unauthorized, set `state = "auth_expired"`.
 
 ### Failure Handling
 
@@ -268,10 +275,10 @@ The codebase should separate these concerns into distinct units:
 - Registry read/write
 - Auth snapshot management
 - Global auth switching
-- Isolated Codex process runner
-- `/status` output parser
+- Codex login runner
+- Usage API probe and response parser
 
-The parser for quota output should be standalone and heavily unit-tested because it is the most format-sensitive part of the design.
+The parser for quota payloads should be standalone and heavily unit-tested because it is the most format-sensitive part of the design.
 
 ## Testing Strategy
 
@@ -280,7 +287,7 @@ The parser for quota output should be standalone and heavily unit-tested because
 - Registry serialization and upgrade-safe reading
 - Active account resolution
 - Atomic switch logic
-- `/status` parser behavior across known output variants
+- Usage API parser behavior across known payload variants
 - Failure state mapping
 
 ### Filesystem Integration Tests
@@ -296,7 +303,7 @@ The parser for quota output should be standalone and heavily unit-tested because
 2. Confirm the account appears in `cxauth list`.
 3. Switch to that account.
 4. Run plain `codex login status` and confirm the selected ChatGPT login is active.
-5. Run `cxauth status <name>` and confirm `weekly` is populated when Codex exposes it.
+5. Run `cxauth status <name>` and confirm `weekly` is populated when the usage API returns a secondary window.
 6. Corrupt a saved snapshot and verify `cxauth switch` fails safely without damaging the active global file.
 
 ## Future Extensions
@@ -304,10 +311,10 @@ The parser for quota output should be standalone and heavily unit-tested because
 The design leaves room for later additions without reshaping the first version:
 
 - Support API key accounts as a separate auth mode.
-- Add a second quota source if the `/status` parser becomes insufficient.
+- Add a second quota source if the usage API becomes insufficient.
 - Add `cxauth refresh <name>` to re-run device auth for an existing account.
 - Add shell integration to expose the active account in the prompt.
 
 ## Final Recommendation
 
-Build the first version around direct `auth.json` snapshot management with device-auth-based account creation and isolated `/status` probing. This matches the user's required global-switch behavior, removes the current manual snapshot workflow, and keeps quota lookup best-effort instead of making the entire tool depend on reverse-engineering a private web page.
+Build the first version around direct `auth.json` snapshot management with device-auth-based account creation and direct ChatGPT backend usage probing. This matches the user's required global-switch behavior, removes the current manual snapshot workflow, and keeps quota lookup best-effort instead of making the entire tool depend on reverse-engineering a private web page.

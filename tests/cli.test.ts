@@ -70,3 +70,17 @@ test("switch returns nonzero for unknown account", async () => {
   expect(result.code).toBe(1);
   expect(result.stderr).toContain("unknown account");
 });
+
+test("rename changes saved account name", async () => {
+  const root = await tempRoot();
+  const paths = getPaths(makeEnv(root));
+  await addSnapshot("main", fakeAuth("a@example.com", "acct_a"), { paths });
+
+  const renamed = await runCli(["rename", "main", "work"], root);
+  const listed = await runCli(["list"], root);
+
+  expect(renamed.code).toBe(0);
+  expect(renamed.stdout).toContain("renamed main to work");
+  expect(listed.stdout).toContain("work");
+  expect(listed.stdout).not.toContain("main");
+});

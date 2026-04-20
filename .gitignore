@@ -4,6 +4,15 @@ dist/
 coverage/
 *.tsbuildinfo
 
+.agents/
+.claude/
+skills-lock.json
+.cxauth/
+.codex/
+auth.json
+registry.json
+auth.json.bak
+
 __pycache__/
 *.py[cod]
 *.egg-info/

@@ -1,4 +1,4 @@
-import { rm } from "node:fs/promises";
+import { rename, rm } from "node:fs/promises";
 import path from "node:path";
 import { AuthSnapshotError, extractMetadata, readAuthSnapshot, writeAuthSnapshot } from "./auth.ts";
 import { probeStatus, runDeviceLogin, validateLoginStatus } from "./codex.ts";
@@ -182,6 +182,44 @@ export async function removeAccount(name: string, options: CommandOptions = {}):
     await rm(path.dirname(account.authPath), { recursive: true, force: true });
     await saveRegistry(paths, registry);
     return { removed: name };
+  } finally {
+    await lock.release();
+  }
+}
+
+export async function renameAccount(
+  oldName: string,
+  newName: string,
+  options: CommandOptions = {},
+): Promise<{ oldName: string; account: AccountEntry }> {
+  const paths = options.paths ?? getPaths();
+  validateName(oldName);
+  validateName(newName);
+  if (oldName === newName) throw new CommandError("new account name must be different");
+  await ensureStorage(paths);
+  const lock = new FileLock(paths.lock);
+  await lock.acquire();
+
+  try {
+    const registry = await loadRegistry(paths);
+    const account = registry.accounts[oldName];
+    if (!account) throw new CommandError(`unknown account: ${oldName}`);
+    if (registry.accounts[newName]) throw new CommandError(`account already exists: ${newName}`);
+
+    await readAuthSnapshot(account.authPath);
+    const oldDir = path.dirname(account.authPath);
+    const newDir = path.join(paths.accountsDir, newName);
+    if (await pathExists(newDir)) throw new CommandError(`account directory already exists: ${newName}`);
+
+    await rename(oldDir, newDir);
+    account.name = newName;
+    account.authPath = accountAuthPath(paths, newName);
+    account.updatedAt = nowIso();
+    delete registry.accounts[oldName];
+    registry.accounts[newName] = account;
+    if (registry.activeAccount === oldName) registry.activeAccount = newName;
+    await saveRegistry(paths, registry);
+    return { oldName, account };
   } finally {
     await lock.release();
   }
