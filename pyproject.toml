@@ -1,0 +1,18 @@
+[build-system]
+requires = ["setuptools>=69"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "cxauth"
+version = "0.1.0"
+description = "Manage multiple ChatGPT-backed Codex auth snapshots"
+readme = "README.md"
+requires-python = ">=3.11"
+authors = [{ name = "cxauth maintainers" }]
+license = { text = "MIT" }
+
+[project.scripts]
+cxauth = "cxauth.cli:main"
+
+[tool.setuptools.packages.find]
+where = ["src"]
