@@ -5,7 +5,8 @@
 ## Install for local development
 
 ```bash
-python3 -m pip install -e .
+bun install
+bun link --global
 ```
 
 ## Commands
@@ -46,11 +47,12 @@ These files contain sensitive tokens. Do not commit, paste, or share them.
 `cxauth status` starts an isolated Codex session with the saved account snapshot,
 sends `/status`, and parses values such as `weekly 62%` and `5h 18%`.
 
+The Bun implementation uses the macOS `script` command as its first PTY backend.
 Quota parsing is best-effort. If Codex changes the TUI output, switching still works
 and status will show `parse_failed`, `timeout`, or `auth_expired`.
 
 ## Test
 
 ```bash
-PYTHONPATH=src python3 -m unittest discover -s tests -v
+bun test
 ```
