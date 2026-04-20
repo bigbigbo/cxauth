@@ -6,6 +6,7 @@ import shutil
 import time
 
 from .auth import AuthSnapshotError, extract_metadata, read_auth_snapshot, write_auth_snapshot
+from .codex import probe_status, run_device_login, validate_login_status
 from .paths import Paths, get_paths
 from .registry import FileLock, atomic_write_bytes, empty_registry, ensure_storage, load_registry, save_registry
 
@@ -80,6 +81,18 @@ def add_snapshot(name: str, auth: dict[str, Any], *, paths: Paths | None = None)
         accounts[name] = account
         save_registry(paths, registry)
         return account
+
+
+def add_via_device_login(
+    name: str,
+    *,
+    paths: Paths | None = None,
+    codex_bin: str = "codex",
+    timeout_seconds: int = 600,
+) -> dict[str, Any]:
+    paths = paths or get_paths()
+    auth = run_device_login(paths=paths, codex_bin=codex_bin, timeout_seconds=timeout_seconds)
+    return add_snapshot(name, auth, paths=paths)
 
 
 def _copy_auth_atomic(source: Path, target: Path) -> None:
@@ -173,3 +186,35 @@ def remove_account(name: str, *, paths: Paths | None = None) -> dict[str, str]:
             registry["activeAccount"] = None
         save_registry(paths, registry)
         return {"removed": name}
+
+
+def refresh_status(
+    name: str | None = None,
+    *,
+    paths: Paths | None = None,
+    codex_bin: str = "codex",
+    timeout_seconds: int = 20,
+) -> list[dict[str, Any]]:
+    paths = paths or get_paths()
+    updated: list[dict[str, Any]] = []
+    with FileLock(paths.lock):
+        registry = _load(paths)
+        names = [name] if name else sorted(registry["accounts"])
+        for account_name in names:
+            account = registry["accounts"].get(account_name)
+            if account is None:
+                raise CommandError(f"unknown account: {account_name}")
+            account["status"] = probe_status(
+                Path(account["authPath"]),
+                paths=paths,
+                codex_bin=codex_bin,
+                timeout_seconds=timeout_seconds,
+            )
+            account["updatedAt"] = _now_iso()
+            updated.append(account)
+        save_registry(paths, registry)
+    return updated
+
+
+def default_switch_validator(paths: Paths, codex_bin: str = "codex") -> bool:
+    return validate_login_status(paths=paths, codex_bin=codex_bin)
