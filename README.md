@@ -19,6 +19,7 @@ checkout as the active `cxauth` command during development.
 cxauth add main
 cxauth list
 cxauth switch main
+cxauth rename main work
 cxauth status
 cxauth status main
 cxauth current
@@ -48,12 +49,13 @@ These files contain sensitive tokens. Do not commit, paste, or share them.
 
 ## Quota status
 
-`cxauth status` starts an isolated Codex session with the saved account snapshot,
-sends `/status`, and parses values such as `weekly 62%` and `5h 18%`.
+`cxauth status` reads the saved account snapshot, calls the same ChatGPT backend
+usage endpoint that Codex uses for rate limits, and displays remaining quota.
+For example, if the API reports `used_percent: 0`, `cxauth` shows `100%`.
 
-The Bun implementation uses the macOS `script` command as its first PTY backend.
-Quota parsing is best-effort. If Codex changes the TUI output, switching still works
-and status will show `parse_failed`, `timeout`, or `auth_expired`.
+Quota lookup is best-effort. If the saved token is expired, the network request
+fails, or the response shape changes, switching still works and status will show
+`auth_expired`, `timeout`, or `parse_failed`.
 
 ## Test
 

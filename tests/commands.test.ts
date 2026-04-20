@@ -3,9 +3,9 @@ import { mkdtemp, rm } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { extractMetadata, readAuthSnapshot, writeAuthSnapshot } from "../src/auth.ts";
-import { addSnapshot, currentAccount, listAccounts, removeAccount, switchAccount } from "../src/commands.ts";
+import { addSnapshot, currentAccount, listAccounts, removeAccount, renameAccount, switchAccount } from "../src/commands.ts";
 import { getPaths } from "../src/paths.ts";
-import { loadRegistry } from "../src/registry.ts";
+import { loadRegistry, pathExists } from "../src/registry.ts";
 import { fakeAuth, makeEnv } from "./helpers.ts";
 
 const tempRoots: string[] = [];
@@ -61,6 +61,43 @@ test("remove refuses active account", async () => {
   await addSnapshot("main", fakeAuth("a@example.com", "acct_a"), { paths });
   await switchAccount("main", { paths, validator: async () => true });
   await expect(removeAccount("main", { paths })).rejects.toThrow("cannot remove the globally active account");
+});
+
+test("rename account moves registry entry and account directory", async () => {
+  const paths = getPaths(makeEnv(await tempRoot()));
+  await addSnapshot("main", fakeAuth("a@example.com", "acct_a"), { paths });
+
+  const renamed = await renameAccount("main", "work", { paths });
+  const registry = await loadRegistry(paths);
+
+  expect(renamed.oldName).toBe("main");
+  expect(renamed.account.name).toBe("work");
+  expect(registry.accounts.main).toBeUndefined();
+  expect(registry.accounts.work?.email).toBe("a@example.com");
+  expect(registry.accounts.work?.authPath).toBe(path.join(paths.accountsDir, "work", "auth.json"));
+  expect(await pathExists(path.join(paths.accountsDir, "main"))).toBe(false);
+  expect(await pathExists(path.join(paths.accountsDir, "work", "auth.json"))).toBe(true);
+});
+
+test("rename account updates active account pointer", async () => {
+  const paths = getPaths(makeEnv(await tempRoot()));
+  await addSnapshot("main", fakeAuth("a@example.com", "acct_a"), { paths });
+  await switchAccount("main", { paths, validator: async () => true });
+
+  await renameAccount("main", "work", { paths });
+
+  expect((await loadRegistry(paths)).activeAccount).toBe("work");
+  expect((await currentAccount({ paths })).name).toBe("work");
+});
+
+test("rename account rejects invalid source and destination", async () => {
+  const paths = getPaths(makeEnv(await tempRoot()));
+  await addSnapshot("main", fakeAuth("a@example.com", "acct_a"), { paths });
+  await addSnapshot("backup", fakeAuth("b@example.com", "acct_b"), { paths });
+
+  await expect(renameAccount("missing", "work", { paths })).rejects.toThrow("unknown account");
+  await expect(renameAccount("main", "backup", { paths })).rejects.toThrow("account already exists");
+  await expect(renameAccount("main", "main", { paths })).rejects.toThrow("new account name must be different");
 });
 
 test("list detects unmanaged global auth", async () => {

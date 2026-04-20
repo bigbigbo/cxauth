@@ -6,6 +6,7 @@ import {
   currentAccount,
   defaultSwitchValidator,
   listAccounts,
+  renameAccount,
   refreshStatus,
   removeAccount,
   switchAccount,
@@ -25,6 +26,7 @@ function usage(): string {
     "  cxauth add <name>",
     "  cxauth list",
     "  cxauth switch <name>",
+    "  cxauth rename <old-name> <new-name>",
     "  cxauth status [name] [--timeout <seconds>]",
     "  cxauth current",
     "  cxauth remove <name>",
@@ -36,7 +38,7 @@ function limitDisplay(account: AccountEntry, key: "weeklyLimit" | "fiveHourLimit
 }
 
 function renderTable(data: { accounts: AccountEntry[]; activeName?: string | null; activeState?: string; activeEmail?: string }): string {
-  const rows = [["NAME", "EMAIL", "PLAN", "ACTIVE", "WEEKLY", "5H", "LAST_CHECKED", "HEALTH"]];
+  const rows = [["NAME", "EMAIL", "PLAN", "ACTIVE", "WEEKLY_LEFT", "5H_LEFT", "LAST_CHECKED", "HEALTH"]];
 
   for (const account of data.accounts) {
     rows.push([
@@ -101,6 +103,14 @@ export async function main(argv = Bun.argv.slice(2)): Promise<number> {
       if (!name) throw new CommandError("missing account name");
       const result = await switchAccount(name, { paths, validator: () => defaultSwitchValidator(paths, bin) });
       console.log(`switched to ${result.name} (${result.validated ? "validated" : "unverified"})`);
+      return 0;
+    }
+
+    if (command === "rename") {
+      const [oldName, newName] = rest;
+      if (!oldName || !newName) throw new CommandError("missing account name");
+      const result = await renameAccount(oldName, newName, { paths });
+      console.log(`renamed ${result.oldName} to ${result.account.name}`);
       return 0;
     }
 

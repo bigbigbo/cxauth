@@ -33,6 +33,9 @@ export function fakeAuth(email: string, accountId: string, plan = "plus"): Recor
           plan_type: plan,
         },
       }),
+      access_token: `access-${accountId}`,
+      refresh_token: `refresh-${accountId}`,
+      account_id: accountId,
     },
   };
 }

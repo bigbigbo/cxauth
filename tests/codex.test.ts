@@ -2,7 +2,7 @@ import { afterEach, expect, test } from "bun:test";
 import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
-import { parseStatusOutput, probeStatus, runDeviceLogin, validateLoginStatus } from "../src/codex.ts";
+import { parseStatusOutput, parseUsagePayload, probeStatus, runDeviceLogin, validateLoginStatus } from "../src/codex.ts";
 import { getPaths } from "../src/paths.ts";
 import { fakeAuth, makeEnv, writeExecutable } from "./helpers.ts";
 
@@ -39,6 +39,37 @@ test("parse status output marks parse failed when no limits exist", () => {
   expect(parsed.weeklyLimit.display).toBe("unknown");
 });
 
+test("parse usage payload maps used percent to remaining quota", () => {
+  const parsed = parseUsagePayload({
+    plan_type: "pro",
+    rate_limit: {
+      primary_window: {
+        used_percent: 18,
+        limit_window_seconds: 18_000,
+        reset_at: 1_765_000_000,
+      },
+      secondary_window: {
+        used_percent: 62,
+        limit_window_seconds: 604_800,
+        reset_at: 1_765_604_800,
+      },
+    },
+  });
+
+  expect(parsed.state).toBe("ok");
+  expect(parsed.source).toBe("chatgpt-usage");
+  expect(parsed.fiveHourLimit.display).toBe("82%");
+  expect(parsed.fiveHourLimit.value).toBe(82);
+  expect(parsed.fiveHourLimit.raw).toContain("used=18%");
+  expect(parsed.fiveHourLimit.raw).toContain("left=82%");
+  expect(parsed.fiveHourLimit.raw).toContain("300m");
+  expect(parsed.weeklyLimit.display).toBe("38%");
+  expect(parsed.weeklyLimit.value).toBe(38);
+  expect(parsed.weeklyLimit.raw).toContain("used=62%");
+  expect(parsed.weeklyLimit.raw).toContain("left=38%");
+  expect(parsed.weeklyLimit.raw).toContain("10080m");
+});
+
 test("validate login status uses codex binary and CODEX_HOME", async () => {
   const root = await tempRoot();
   const fake = await writeExecutable(
@@ -71,32 +102,49 @@ console.log("device login complete");
   expect((auth.tokens as Record<string, string>).id_token.split(".")).toHaveLength(3);
 });
 
-test("probe status parses output from fake PTY backend", async () => {
+test("probe status requests ChatGPT usage API with snapshot tokens", async () => {
   const root = await tempRoot();
-  const fakeScript = await writeExecutable(
-    path.join(root, "script"),
-    `
-const args = Bun.argv.slice(2);
-if (!args.some((arg) => arg.endsWith("codex"))) process.exit(2);
-if (!args.includes("--no-alt-screen")) process.exit(3);
-console.log("ready");
-for await (const chunk of Bun.stdin.stream()) {
-  const text = new TextDecoder().decode(chunk);
-  if (text.includes("/status")) console.log("5h 11% weekly 44%");
-  if (text.includes("/quit")) process.exit(0);
-}
-`,
-  );
-  const fakeCodex = await writeExecutable(
-    path.join(root, "codex"),
-    `
-console.log("fake codex should be wrapped by script");
-`,
-  );
   const paths = getPaths(makeEnv(root));
   const authPath = path.join(root, "auth.json");
-  await writeFile(authPath, JSON.stringify({ auth_mode: "chatgpt", tokens: { id_token: "a.b.c" } }));
-  const result = await probeStatus(authPath, { paths, codexBin: fakeCodex, scriptBin: fakeScript, timeoutMs: 2_000 });
+  await writeFile(authPath, JSON.stringify(fakeAuth("quota@example.com", "acct_quota")));
+
+  let requestedUrl = "";
+  let requestedHeaders = new Headers();
+  const fetchImpl: typeof fetch = async (input, init) => {
+    requestedUrl = String(input);
+    requestedHeaders = new Headers(init?.headers);
+    return new Response(
+      JSON.stringify({
+        plan_type: "plus",
+        rate_limit: {
+          primary_window: { used_percent: 11, limit_window_seconds: 18_000, reset_at: 123 },
+          secondary_window: { used_percent: 44, limit_window_seconds: 604_800, reset_at: 456 },
+        },
+      }),
+      { status: 200, headers: { "content-type": "application/json" } },
+    );
+  };
+
+  const result = await probeStatus(authPath, { paths, fetchImpl, timeoutMs: 2_000 });
   expect(result.state).toBe("ok");
-  expect(result.weeklyLimit.display).toBe("44%");
+  expect(result.source).toBe("chatgpt-usage");
+  expect(requestedUrl).toBe("https://chatgpt.com/backend-api/wham/usage");
+  expect(requestedHeaders.get("authorization")).toBe("Bearer access-acct_quota");
+  expect(requestedHeaders.get("chatgpt-account-id")).toBe("acct_quota");
+  expect(result.weeklyLimit.display).toBe("56%");
+  expect(result.fiveHourLimit.display).toBe("89%");
+});
+
+test("probe status maps unauthorized usage API response to auth expired", async () => {
+  const root = await tempRoot();
+  const paths = getPaths(makeEnv(root));
+  const authPath = path.join(root, "auth.json");
+  await writeFile(authPath, JSON.stringify(fakeAuth("expired@example.com", "acct_expired")));
+
+  const fetchImpl: typeof fetch = async () => new Response("expired", { status: 401 });
+  const result = await probeStatus(authPath, { paths, fetchImpl, timeoutMs: 2_000 });
+
+  expect(result.state).toBe("auth_expired");
+  expect(result.weeklyLimit.display).toBe("unknown");
+  expect(result.rawSnippet).toContain("401");
 });
