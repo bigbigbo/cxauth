@@ -6,8 +6,12 @@
 
 ```bash
 bun install
-bun link --global
+ln -sf "$(pwd)/src/cli.ts" "$(bun pm bin -g)/cxauth"
+cxauth --version
 ```
+
+The CLI entrypoint has a Bun shebang, so the symlink above registers the local
+checkout as the active `cxauth` command during development.
 
 ## Commands
 
