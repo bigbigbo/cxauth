@@ -52,6 +52,8 @@ These files contain sensitive tokens. Do not commit, paste, or share them.
 `cxauth status` reads the saved account snapshot, calls the same ChatGPT backend
 usage endpoint that Codex uses for rate limits, and displays remaining quota.
 For example, if the API reports `used_percent: 0`, `cxauth` shows `100%`.
+The table also shows weekly and 5-hour reset times in local time, together with
+relative countdowns such as `2026-04-27 08:12 (in 6d 0h)`.
 
 Quota lookup is best-effort. If the saved token is expired, the network request
 fails, or the response shape changes, switching still works and status will show

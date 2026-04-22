@@ -20,6 +20,8 @@ function failedStatus(state: StatusState, source: string, rawSnippet: string): A
   return {
     weeklyLimit: unknownLimit(),
     fiveHourLimit: unknownLimit(),
+    weeklyResetAt: null,
+    fiveHourResetAt: null,
     checkedAt: nowIso(),
     source,
     rawSnippet: rawSnippet.slice(-RAW_SNIPPET_LIMIT),
@@ -50,6 +52,8 @@ export function parseStatusOutput(rawOutput: string): AccountStatus {
   return {
     weeklyLimit,
     fiveHourLimit,
+    weeklyResetAt: null,
+    fiveHourResetAt: null,
     checkedAt: nowIso(),
     source: "/status",
     rawSnippet: output.slice(-RAW_SNIPPET_LIMIT),
@@ -79,6 +83,12 @@ function windowMinutes(window: Record<string, unknown>): number | null {
   const seconds = numberValue(window.limit_window_seconds);
   if (seconds === null || seconds <= 0) return null;
   return Math.ceil(seconds / 60);
+}
+
+function isoFromEpochSeconds(value: unknown): string | null {
+  const seconds = numberValue(value);
+  if (seconds === null || seconds <= 0) return null;
+  return new Date(seconds * 1000).toISOString();
 }
 
 function limitFromWindow(label: string, windowValue: unknown): LimitValue {
@@ -117,10 +127,14 @@ export function parseUsagePayload(payload: unknown): AccountStatus {
   const rateLimit = objectRecord(root?.rate_limit);
   const fiveHourLimit = limitFromWindow("primary", rateLimit?.primary_window);
   const weeklyLimit = limitFromWindow("secondary", rateLimit?.secondary_window);
+  const fiveHourResetAt = isoFromEpochSeconds(objectRecord(rateLimit?.primary_window)?.reset_at);
+  const weeklyResetAt = isoFromEpochSeconds(objectRecord(rateLimit?.secondary_window)?.reset_at);
 
   return {
     weeklyLimit,
     fiveHourLimit,
+    weeklyResetAt,
+    fiveHourResetAt,
     checkedAt: nowIso(),
     source: "chatgpt-usage",
     rawSnippet: jsonSnippet(payload),

@@ -26,6 +26,8 @@ test("add snapshot persists metadata and default status", async () => {
   expect(account.name).toBe("main");
   expect(account.email).toBe("a@example.com");
   expect(account.status.state).toBe("not_checked");
+  expect(account.status.weeklyResetAt).toBeNull();
+  expect(account.status.fiveHourResetAt).toBeNull();
 });
 
 test("add snapshot rejects duplicate name and duplicate email", async () => {

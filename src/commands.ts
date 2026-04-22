@@ -24,6 +24,8 @@ function defaultStatus(): AccountStatus {
   return {
     weeklyLimit: defaultLimit(),
     fiveHourLimit: defaultLimit(),
+    weeklyResetAt: null,
+    fiveHourResetAt: null,
     checkedAt: null,
     source: null,
     rawSnippet: "",

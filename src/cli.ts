@@ -37,8 +37,41 @@ function limitDisplay(account: AccountEntry, key: "weeklyLimit" | "fiveHourLimit
   return account.status?.[key]?.display || "unknown";
 }
 
+function pad2(value: number): string {
+  return String(value).padStart(2, "0");
+}
+
+function formatLocalTimestamp(iso: string): string {
+  const date = new Date(iso);
+  return `${date.getFullYear()}-${pad2(date.getMonth() + 1)}-${pad2(date.getDate())} ${pad2(date.getHours())}:${pad2(date.getMinutes())}`;
+}
+
+function formatRelativeReset(targetMs: number, nowMs: number): string {
+  const diffMs = targetMs - nowMs;
+  if (Math.abs(diffMs) < 60_000) return "now";
+
+  const future = diffMs > 0;
+  const totalMinutes = Math.floor(Math.abs(diffMs) / 60_000);
+  const days = Math.floor(totalMinutes / (24 * 60));
+  const hours = Math.floor((totalMinutes % (24 * 60)) / 60);
+  const minutes = totalMinutes % 60;
+
+  let body: string;
+  if (days > 0) body = `${days}d ${hours}h`;
+  else if (hours > 0) body = `${hours}h ${minutes}m`;
+  else body = `${minutes}m`;
+  return future ? `in ${body}` : `${body} ago`;
+}
+
+export function formatResetAtDisplay(resetAt: string | null, nowMs = Date.now()): string {
+  if (!resetAt) return "unknown";
+  const targetMs = Date.parse(resetAt);
+  if (!Number.isFinite(targetMs)) return "unknown";
+  return `${formatLocalTimestamp(resetAt)} (${formatRelativeReset(targetMs, nowMs)})`;
+}
+
 function renderTable(data: { accounts: AccountEntry[]; activeName?: string | null; activeState?: string; activeEmail?: string }): string {
-  const rows = [["NAME", "EMAIL", "PLAN", "ACTIVE", "WEEKLY_LEFT", "5H_LEFT", "LAST_CHECKED", "HEALTH"]];
+  const rows = [["NAME", "EMAIL", "PLAN", "ACTIVE", "WEEKLY_LEFT", "5H_LEFT", "WEEKLY_RESET_AT", "5H_RESET_AT", "LAST_CHECKED", "HEALTH"]];
 
   for (const account of data.accounts) {
     rows.push([
@@ -48,6 +81,8 @@ function renderTable(data: { accounts: AccountEntry[]; activeName?: string | nul
       account.name === data.activeName ? "*" : "",
       limitDisplay(account, "weeklyLimit"),
       limitDisplay(account, "fiveHourLimit"),
+      formatResetAtDisplay(account.status?.weeklyResetAt ?? null),
+      formatResetAtDisplay(account.status?.fiveHourResetAt ?? null),
       account.status?.checkedAt ?? "never",
       account.status?.state ?? "not_checked",
     ]);
