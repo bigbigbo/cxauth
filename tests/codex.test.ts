@@ -18,6 +18,10 @@ afterEach(async () => {
   for (const root of tempRoots.splice(0)) await rm(root, { recursive: true, force: true });
 });
 
+function isoFromSeconds(seconds: number): string {
+  return new Date(seconds * 1000).toISOString();
+}
+
 test("parse status output extracts weekly and five hour percentages", () => {
   const parsed = parseStatusOutput("model gpt-5.4 | 5h 18% | weekly 62% | context 71%");
   expect(parsed.state).toBe("ok");
@@ -37,6 +41,8 @@ test("parse status output marks parse failed when no limits exist", () => {
   const parsed = parseStatusOutput("status window without limit values");
   expect(parsed.state).toBe("parse_failed");
   expect(parsed.weeklyLimit.display).toBe("unknown");
+  expect(parsed.weeklyResetAt).toBeNull();
+  expect(parsed.fiveHourResetAt).toBeNull();
 });
 
 test("parse usage payload maps used percent to remaining quota", () => {
@@ -63,11 +69,13 @@ test("parse usage payload maps used percent to remaining quota", () => {
   expect(parsed.fiveHourLimit.raw).toContain("used=18%");
   expect(parsed.fiveHourLimit.raw).toContain("left=82%");
   expect(parsed.fiveHourLimit.raw).toContain("300m");
+  expect(parsed.fiveHourResetAt).toBe(isoFromSeconds(1_765_000_000));
   expect(parsed.weeklyLimit.display).toBe("38%");
   expect(parsed.weeklyLimit.value).toBe(38);
   expect(parsed.weeklyLimit.raw).toContain("used=62%");
   expect(parsed.weeklyLimit.raw).toContain("left=38%");
   expect(parsed.weeklyLimit.raw).toContain("10080m");
+  expect(parsed.weeklyResetAt).toBe(isoFromSeconds(1_765_604_800));
 });
 
 test("validate login status uses codex binary and CODEX_HOME", async () => {
@@ -133,6 +141,8 @@ test("probe status requests ChatGPT usage API with snapshot tokens", async () =>
   expect(requestedHeaders.get("chatgpt-account-id")).toBe("acct_quota");
   expect(result.weeklyLimit.display).toBe("56%");
   expect(result.fiveHourLimit.display).toBe("89%");
+  expect(result.weeklyResetAt).toBe(isoFromSeconds(456));
+  expect(result.fiveHourResetAt).toBe(isoFromSeconds(123));
 });
 
 test("probe status maps unauthorized usage API response to auth expired", async () => {

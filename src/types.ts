@@ -10,6 +10,8 @@ export type StatusState = "ok" | "not_checked" | "auth_expired" | "parse_failed"
 export type AccountStatus = {
   weeklyLimit: LimitValue;
   fiveHourLimit: LimitValue;
+  weeklyResetAt: string | null;
+  fiveHourResetAt: string | null;
   checkedAt: string | null;
   source: string | null;
   rawSnippet: string;
