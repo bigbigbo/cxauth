@@ -5,7 +5,9 @@ import {
   addViaDeviceLogin,
   currentAccount,
   defaultSwitchValidator,
+  importFromFile,
   listAccounts,
+  reauthAccount,
   renameAccount,
   refreshStatus,
   removeAccount,
@@ -24,11 +26,13 @@ function usage(): string {
   return [
     "Usage:",
     "  cxauth add <name>",
+    "  cxauth import <name> <auth.json-path>",
     "  cxauth list",
     "  cxauth switch <name>",
     "  cxauth rename <old-name> <new-name>",
     "  cxauth status [name] [--timeout <seconds>]",
     "  cxauth current",
+    "  cxauth reauth <name>",
     "  cxauth remove <name>",
   ].join("\n");
 }
@@ -128,6 +132,15 @@ export async function main(argv = Bun.argv.slice(2)): Promise<number> {
       return 0;
     }
 
+    if (command === "import") {
+      const [name, filePath] = rest;
+      if (!name) throw new CommandError("missing account name");
+      if (!filePath) throw new CommandError("missing auth.json path");
+      const account = await importFromFile(name, filePath, { paths });
+      console.log(`imported ${account.name} <${account.email}>`);
+      return 0;
+    }
+
     if (command === "list") {
       console.log(renderTable(await listAccounts({ paths })));
       return 0;
@@ -161,6 +174,14 @@ export async function main(argv = Bun.argv.slice(2)): Promise<number> {
     if (command === "current") {
       const current = await currentAccount({ paths });
       console.log(current.name ? `${current.name} <${current.email}>` : `${current.state} <${current.email}>`);
+      return 0;
+    }
+
+    if (command === "reauth") {
+      const [name] = rest;
+      if (!name) throw new CommandError("missing account name");
+      const account = await reauthAccount(name, { paths, codexBin: bin });
+      console.log(`reauthed ${account.name} <${account.email}>`);
       return 0;
     }
 

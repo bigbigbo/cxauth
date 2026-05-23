@@ -50,6 +50,36 @@ function findFirst(objects: Record<string, unknown>[], keys: string[]): string {
   return "unknown";
 }
 
+export function normalizeAuthSnapshot(value: unknown): AuthSnapshot {
+  if (!value || typeof value !== "object" || Array.isArray(value)) {
+    throw new AuthSnapshotError("auth snapshot must be a JSON object");
+  }
+
+  const obj = value as Record<string, unknown>;
+
+  // Already has a tokens wrapper — validate as-is
+  if (obj.tokens && typeof obj.tokens === "object" && !Array.isArray(obj.tokens)) {
+    validateAuthSnapshot(obj);
+    return obj as AuthSnapshot;
+  }
+
+  // Flat format: id_token / access_token / refresh_token at top level — wrap into tokens
+  if (typeof obj.id_token === "string" || typeof obj.access_token === "string" || typeof obj.refresh_token === "string") {
+    const { id_token, access_token, refresh_token, account_id, ...rest } = obj;
+    const tokens: Record<string, unknown> = {};
+    if (id_token !== undefined) tokens.id_token = id_token;
+    if (access_token !== undefined) tokens.access_token = access_token;
+    if (refresh_token !== undefined) tokens.refresh_token = refresh_token;
+    if (account_id !== undefined) tokens.account_id = account_id;
+
+    const normalized: Record<string, unknown> = { ...rest, auth_mode: "chatgpt", tokens };
+    validateAuthSnapshot(normalized);
+    return normalized as AuthSnapshot;
+  }
+
+  throw new AuthSnapshotError("auth snapshot does not contain tokens");
+}
+
 export function validateAuthSnapshot(value: unknown): asserts value is AuthSnapshot {
   if (!value || typeof value !== "object" || Array.isArray(value)) {
     throw new AuthSnapshotError("auth snapshot must be a JSON object");

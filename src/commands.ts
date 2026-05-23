@@ -1,6 +1,6 @@
 import { rename, rm } from "node:fs/promises";
 import path from "node:path";
-import { AuthSnapshotError, extractMetadata, readAuthSnapshot, writeAuthSnapshot } from "./auth.ts";
+import { AuthSnapshotError, extractMetadata, normalizeAuthSnapshot, readAuthSnapshot, writeAuthSnapshot } from "./auth.ts";
 import { probeStatus, runDeviceLogin, validateLoginStatus } from "./codex.ts";
 import { getPaths } from "./paths.ts";
 import { FileLock, atomicWriteBytes, ensureStorage, loadRegistry, pathExists, saveRegistry } from "./registry.ts";
@@ -89,6 +89,27 @@ export async function addViaDeviceLogin(
 ): Promise<AccountEntry> {
   const paths = options.paths ?? getPaths();
   const auth = await runDeviceLogin({ paths, codexBin: options.codexBin, timeoutMs: options.timeoutMs });
+  return addSnapshot(name, auth, { paths });
+}
+
+export async function importFromFile(
+  name: string,
+  filePath: string,
+  options: CommandOptions = {},
+): Promise<AccountEntry> {
+  const paths = options.paths ?? getPaths();
+  validateName(name);
+  const resolved = path.resolve(filePath);
+  let raw: unknown;
+  try {
+    raw = JSON.parse(await Bun.file(resolved).text());
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === "ENOENT") {
+      throw new CommandError(`file not found: ${resolved}`);
+    }
+    throw new CommandError(`invalid JSON in ${resolved}`);
+  }
+  const auth = normalizeAuthSnapshot(raw);
   return addSnapshot(name, auth, { paths });
 }
 
@@ -222,6 +243,42 @@ export async function renameAccount(
     if (registry.activeAccount === oldName) registry.activeAccount = newName;
     await saveRegistry(paths, registry);
     return { oldName, account };
+  } finally {
+    await lock.release();
+  }
+}
+
+export async function reauthAccount(
+  name: string,
+  options: CommandOptions & { codexBin?: string; timeoutMs?: number } = {},
+): Promise<AccountEntry> {
+  const paths = options.paths ?? getPaths();
+  await ensureStorage(paths);
+  const lock = new FileLock(paths.lock);
+  await lock.acquire();
+
+  try {
+    const registry = await loadRegistry(paths);
+    const account = registry.accounts[name];
+    if (!account) throw new CommandError(`unknown account: ${name}`);
+
+    const auth = await runDeviceLogin({ paths, codexBin: options.codexBin, timeoutMs: options.timeoutMs });
+    const metadata = extractMetadata(auth);
+    await writeAuthSnapshot(account.authPath, auth);
+
+    account.email = metadata.email;
+    account.chatgptAccountId = metadata.chatgptAccountId;
+    account.planType = metadata.planType;
+    account.updatedAt = nowIso();
+    account.status = defaultStatus();
+
+    // If this is the active account, also update global auth
+    if (registry.activeAccount === name) {
+      await writeAuthSnapshot(paths.globalAuth, auth);
+    }
+
+    await saveRegistry(paths, registry);
+    return account;
   } finally {
     await lock.release();
   }
